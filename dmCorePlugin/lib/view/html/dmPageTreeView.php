@@ -41,9 +41,24 @@ abstract class dmPageTreeView extends dmConfigurable
 
   protected function getRecordTreeQuery()
   {
-    return dmDb::table('DmPage')->createQuery('page')
+    //List of models, witch must be hiding from pages tree
+    $models_off = sfConfig::get('dm_hide_pages_tree_models', null);
+    $actions_off = sfConfig::get('dm_hide_pages_tree_actions', null);
+
+    $result = dmDb::table('DmPage')->createQuery('page')
     ->withI18n($this->culture, null, 'page')
     ->select('page.id, page.action, pageTranslation.name');
+
+    //Get all pages in tree without placed in config.yml
+    if ($models_off !== null)
+    foreach($models_off as $key=>$name)
+    {
+        $list_actions = $actions_off[$name];
+        ($list_actions !== null && count($list_actions) > 0) && $actions_links = ' AND page.action IN ("'.implode('","',$list_actions).'")';
+        $result->andWhere(' NOT (page.module = ?'.$actions_links.')', $name);
+    }
+
+    return $result;
   }
 
   public function render($options = array())

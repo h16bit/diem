@@ -7,10 +7,13 @@ abstract class dmFrontPageBaseHelper extends dmConfigurable
     $serviceContainer,
     $helper,
     $page,
-    $areas;
-
-    //Declare id of optional page
-    var $page_area_id;
+    $areas,
+    $global_area_id,
+    $global_areas,
+    $area_fallBackCulture,
+    $area_culture,
+    $area_lid,
+    $area_vid;
 
   public function __construct(sfEventDispatcher $dispatcher, sfServiceContainer $serviceContainer, dmHelper $helper, array $options = array())
   {
@@ -59,38 +62,65 @@ abstract class dmFrontPageBaseHelper extends dmConfigurable
   
   public function getAreas($culture = null)
   {
-    if (null === $this->areas || null !== $this->page_area_id)
+
+    $this->area_culture = null === $culture ? $this->serviceContainer->getParameter('user.culture') : $culture;
+    $this->area_fallBackCulture = sfConfig::get('sf_default_culture');
+
+    if (!$this->page instanceof DmPage)
     {
-      if (!$this->page instanceof DmPage)
-      {
-        throw new dmException('Can not fetch page areas because no page have been set');
-      }
-      
-      $culture = null === $culture ? $this->serviceContainer->getParameter('user.culture') : $culture;
-      $fallBackCulture = sfConfig::get('sf_default_culture');
+      throw new dmException('Can not fetch page areas because no page have been set');
+    }
 
-      //Set id of page, whete area is placed
-      $pid = $this->page_area_id;
-      //If we dont set id of page,display area from current page
-      $getpageidv = (null === $pid) ? $this->page->getPageView()->get('id') : $pid;
-      $getpageidl = (null === $pid) ? $this->page->getPageView()->getLayout()->get('id') : $pid;
+    //Get global areas
+    if (null !== $this->global_area_id && empty($this->global_areas[$this->global_area_id]))
+    {
+      $this->area_lid = $this->global_area_id;
+      $this->area_vid = $this->global_area_id;
 
-      $areas = dmDb::query('DmArea a')
+      $this->global_areas[$this->global_area_id] = $this->parseAreas($this->getDbAreas());
+    }
+
+    //Get local areas
+    if (null === $this->areas && null === $this->global_area_id)
+    {
+      $this->area_lid = $this->page->getPageView()->getLayout()->get('id');
+      $this->area_vid = $this->page->getPageView()->get('id');
+
+      $this->areas = $this->parseAreas($this->getDbAreas());
+    }
+
+    if (null !== $this->global_area_id)
+    {
+      $return_areas = $this->global_areas[$this->global_area_id];
+      $this->global_area_id = null;
+      return $return_areas;
+    }
+    else
+    {
+      return $this->areas;
+    }
+    
+  }
+  public function getDbAreas() {
+      return dmDb::query('DmArea a')
       ->leftJoin('a.Zones z')
       ->leftJoin('z.Widgets w')
-      ->leftJoin('w.Translation wTranslation WITH wTranslation.lang = ? OR wTranslation.lang = ?', array($culture, $fallBackCulture))
+      ->leftJoin('w.Translation wTranslation WITH wTranslation.lang = ? OR wTranslation.lang = ?', array($this->area_culture, $this->area_fallBackCulture))
       ->select('a.dm_layout_id, a.type, z.width, z.css_class, w.module, w.action, wTranslation.value, w.css_class')
-      ->where('a.dm_layout_id = ?', $getpageidl)
-      ->orWhere('a.dm_page_view_id = ?', $getpageidv)
+      ->where('a.dm_layout_id = ?', $this->area_lid)
+      ->orWhere('a.dm_page_view_id = ?', $this->area_vid)
       ->orderBy('z.position asc, w.position asc')
-      ->fetchArray();
-      
+      ->fetchArray();      
+  }
+  
+  public function parseAreas($areas)
+  {     
       /*
-       * WARNING strange code
-       * This code is to simulate widget i18n fallback,
-       * which can not be achived
-       * normally when hydrating with an array
-       */
+      * WARNING strange code
+      * This code is to simulate widget i18n fallback,
+      * which can not be achived
+      * normally when hydrating with an array
+      */
       foreach($areas as $areaIndex => $area)
       {
         foreach($area['Zones'] as $zoneIndex => $zone)
@@ -98,21 +128,21 @@ abstract class dmFrontPageBaseHelper extends dmConfigurable
           foreach($zone['Widgets'] as $widgetIndex => $widget)
           {
             $value = null;
-            
-            // there is a translation for $culture
-            if (isset($widget['Translation'][$culture]))
+
+            // there is a translation for $this->area_culture
+            if (isset($widget['Translation'][$this->area_culture]))
             {
-              $value = $widget['Translation'][$culture]['value'];
+              $value = $widget['Translation'][$this->area_culture]['value'];
             }
-            // there is a default translation for $fallBackCulture
-            elseif (isset($widget['Translation'][$fallBackCulture]))
+            // there is a default translation for $this->area_fallBackCulture
+            elseif (isset($widget['Translation'][$this->area_fallBackCulture]))
             {
-              $value = $widget['Translation'][$fallBackCulture]['value'];
+              $value = $widget['Translation'][$this->area_fallBackCulture]['value'];
             }
-            
+
             // assign the value to the widget array
             $areas[$areaIndex]['Zones'][$zoneIndex]['Widgets'][$widgetIndex]['value'] = $value;
-            
+
             // unset the useless Translation array
             unset($areas[$areaIndex]['Zones'][$zoneIndex]['Widgets'][$widgetIndex]['Translation']);
           }
@@ -125,31 +155,18 @@ abstract class dmFrontPageBaseHelper extends dmConfigurable
       /**
        * Give nice keys to the areas array
        */
-      $this->areas = array();
+      $return_areas = array();
       foreach($areas as $area)
       {
         $prefix = $area['dm_layout_id'] ? 'layout' : 'page';
 
-        $this->areas[$prefix.'.'.$area['type']] = $area;
+        $return_areas[$prefix.'.'.$area['type']] = $area;
       }
       unset($areas);
-    }
-    
-    //If we get area from different page,clear array of areas in current page
-    if (null !== $this->page_area_id)
-    {
-        $areas_out = $this->areas;
-        $this->areas = null;
-        $this->page_area_id = null;
-    }
-    else
-    {
-        $areas_out = $this->areas;
-    }
 
-    return $areas_out;
+      return $return_areas;
   }
-  
+
   public function getArea($name)
   {
     $areas = $this->getAreas();
@@ -194,7 +211,7 @@ abstract class dmFrontPageBaseHelper extends dmConfigurable
     $options = dmString::toArray($options);
 
     //Set id of page we need
-    $this->page_area_id = dmArray::get($options, 'global_area', null);
+    $this->global_area_id = dmArray::get($options, 'global_area', null);
 
     $tagName = $this->getAreaTypeTagName($name);
 

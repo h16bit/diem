@@ -33,6 +33,12 @@ class dmMenu extends dmConfigurable implements ArrayAccess, Countable, IteratorA
     $this->configure($options);
   }
 
+  public function addToConfig(array $options)
+  {
+    $this->configure($options);
+    return $this;
+  }
+
   public function getDefaultOptions()
   {
     return array(
@@ -434,12 +440,27 @@ class dmMenu extends dmConfigurable implements ArrayAccess, Countable, IteratorA
       return $this;
     }
 
+    $dbresult = dmDb::table('DmPage')->createQuery('p')
+    ->withI18n($this->user->getCulture(), null, 'p')
+    ->select('p.*, pTranslation.*');
+
+    if(!empty($this->options['hide_menu']))
+    {
+        //List of models, witch must be hiding from pages tree
+        $models_off = sfConfig::get('dm_hide_menu_tree_models', null);
+        $actions_off = sfConfig::get('dm_hide_menu_tree_actions', null);
+
+        //Get all pages in tree without placed in config.yml
+        foreach($models_off as $key=>$name)
+        {
+           $list_actions = $actions_off[$name];
+           ($list_actions !== null && count($list_actions) > 0) && $actions_links = ' AND p.action IN ("'.implode('","',$list_actions).'")';
+           $dbresult->andWhere(' NOT (p.module = ?'.$actions_links.')', $name);
+        }
+    }
+
     $treeObject = dmDb::table('DmPage')->getTree();
-    $treeObject->setBaseQuery(
-      dmDb::table('DmPage')->createQuery('p')
-      ->withI18n($this->user->getCulture(), null, 'p')
-      ->select('p.*, pTranslation.*')
-    );
+    $treeObject->setBaseQuery($dbresult);
 
     if($pageChildren = $this->getLink()->getPage()->getNode()->getChildren())
     {
